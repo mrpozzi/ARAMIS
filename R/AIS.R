@@ -189,7 +189,7 @@ AIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mix
 	
 	gc()
 	
-	
+	IS <- IS[-(1:N[1]),]
 	colnames(IS) <- c(paste("x",1:p,sep=""),"w")
 	
 	ESS <- nrow(IS)/(1+var(IS[,p+1])/(mean(IS[,p+1]))^2)
@@ -202,12 +202,12 @@ AIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mix
 	### the prefix has the same meaning as in dnorm, pnorm and rnorm.
 	dTarg <- function(pp=alphaB,mu=muHatB,Sig=SigmaHatB){
 		G <- length(pp)
-				function(xx,log=TRUE){
-			if(log){
-				sum(unlist(lapply(1:G,function(g)log(pp[g])+dprop(xx,mu[g,],Sig[,,g],log=TRUE))))
-				}else{
-					exp(sum(unlist(lapply(1:G,function(g)log(pp[g])+dprop(xx,mu[g,],Sig[,,g],log=TRUE)))))
-					}
+		
+		function(xx,log=TRUE){
+			
+			px <- sum(unlist(lapply(1:G,function(g)log(pp[g])+dprop(xx,mu[g,],Sig[,,g],log=TRUE))))
+			if(log)return(exp(px))
+			return(px)
 			
 			}
 		}
@@ -251,9 +251,9 @@ AIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mix
 	
 	
 	return(new("ISO",IS=IS,
-	                 Prop=alphaB,
-	                 Mean= muHatB,
-	                 Var=SigmaHatB,
+	                 Prop=list(alphaB),
+	                 Mean= list(muHatB),
+	                 Var=list(SigmaHatB),
 	                 ESS=ESS,
 	                 Perp = maxPerp,
 	                 seed=seed,

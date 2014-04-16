@@ -17,10 +17,7 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
     if (parallel != "no" && nCores!=1) {
     	require("parallel")
     	
-    	if(nCores<1){
-    		nCores <- detectCores()
-    		
-    		}
+    	if(nCores<1) nCores <- detectCores()
     	
         if (parallel == "multicore"){
         	have_mc <- .Platform$OS.type != "windows"
@@ -69,14 +66,14 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 	### target, proposal and weights
 	w <- prop <- targ <- rep(0, totSS)
 	targ[from:to] <- init$targ
-	prop[from:to] <- init$prop
+	prop0 <- N[1]*init$prop
+	prop[from:to] <- prop0
 	
 	### compute the weights
-	w[1:to] <- exp(targ[1:to])/prop[1:to]
+	w[1:to] <- exp(targ[1:to])/(prop[1:to]/N[1])
 	### against underflow
 	w[1:to][(exp(targ[1:to])<sqrt(.Machine$double.eps))&(prop[1:to]<sqrt(.Machine$double.eps))] <- 0
 	
-	prop[from:to] <- prop[from:to] * N[1]
 	
 	### Perplexity
 	Perp <- rep(0,sum(niter))
@@ -84,26 +81,23 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 	wBar <- wBar[wBar>=sqrt(.Machine$double.eps)] 
 	Perp[1] <- exp(-sum(wBar*log(wBar)))/length(wBar)
 	
-	if(verbose) cat("\nInitialization: local ESS =",N[1]/(1+var(w[1:to])/(mean(w[1:to]))^2),"\n Perplexity =",Perp[1],"\n\n") 
+	if(verbose) cat("\nInitialization: local ESS =",sum(w[1:to])^2/sum(w[1:to]^2),"\n Perplexity =",Perp[1],"\n\n") #N[1]/(1+var(w[1:to])/(mean(w[1:to]))^2)
 	
 	
 	### compute the IS estimates of mean and variance
-	calcu <- cov.wt(xxnew,wt=w[1:to])
+	calcu <- cov.wt(xxnew,wt=w[1:to]/sum(w[1:to]))
 	
 	### just one component in the first phase
-	alpha <- list()
+	alpha <- muHat <- SigmaHat <- list()
 	alpha[[1]] <- 1
-	muHat <- t(calcu$center)
-	SigmaHat <- array(calcu$cov,c(dim(calcu$cov),1))
+	muHat[[1]] <- t(calcu$center)
+	SigmaHat[[1]] <- array(calcu$cov,c(dim(calcu$cov),1))
 		
-	muHat <- list(muHat)
-	SigmaHat <- list(SigmaHat)
-	
 	from <- to + 1
 	to <- to + N[2]
 	
 	cond <- FALSE
-	t <- 1
+	t <- 2
 	
 	### Adaptation Phase
 	if(niter[1]!=0){
@@ -113,42 +107,34 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 			sampleImp <- function(n){
 				
 				### new sample from the proposal
-				x <- rprop(n,mu=muHat[[t]][1,],Sig=SigmaHat[[t]][,,1])
+				x <- rprop(n,mu=muHat[[t-1]][1,],Sig=SigmaHat[[t-1]][,,1])
 				
 				### evaluate the target at xxnew
 				trgt <- target(x)
 				
 				### evaluate the proposal at xxnew
 				prp <- rep(0,nrow(x))
-				prp <- prp + Reduce("+",lapply(1:t,function(k){
-					dprop(x,muHat[[k]][1,], SigmaHat[[k]][,,1])
+				
+				prp <- prp + Reduce("+",lapply(1:(t-1),function(k){
+					dprop(x,muHat[[k]][1,], SigmaHat[[k]][,,1])*((t==1)*N[1]+(t>1)*N[2])
 					}))
-				ww <- exp(trgt)/prp
+				ww <- exp(trgt)/prp/(N[1]+(t-1)*N[2])
 				ww[(exp(trgt)<sqrt(.Machine$double.eps))&(exp(prp)<sqrt(.Machine$double.eps))] <- 0
 				
 				return(list(x=x,trgt=trgt,prp=prp,ww=ww))
 				
 				}
 			
+			
+			assign("prop0",rprop,environment(sampleImp))
 			assign("target",target,environment(sampleImp))
 			assign("dprop",dprop,environment(sampleImp))
 			assign("rprop",rprop,environment(sampleImp))
 							
 			}
-
-		
-		
-		
+	
 		
 		while((t <=niter[1])&!cond){
-			
-			
-			### Update the proposal
-			prop[1:(from-1)] <- prop[1:(from-1)] + N[2]*dprop(xx[1:(from-1),],muHat[[t]][1,],SigmaHat[[t]][,,1])
-			### Update the weights
-			w[1:(from-1)] <- exp(targ[1:(from-1)])/prop[1:(from-1)]
-			### against underflow
-			w[1:(from-1)][(exp(targ[1:(from-1)])<sqrt(.Machine$double.eps))&(prop[1:(from-1)]<sqrt(.Machine$double.eps))] <- 0
 			
 			if (nCores > 1L && (have_mc || have_snow)) {
 				
@@ -189,7 +175,7 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 				}else{
 					
 					### new sample from the proposal
-					xxnew <- rprop(N[2],mu=muHat[[t]][1,],Sig=SigmaHat[[t]][,,1])
+					xxnew <- rprop(N[2],mu=muHat[[t-1]][1,],Sig=SigmaHat[[t-1]][,,1])
 					xx[from:to,] <- xxnew  
 					
 					### evaluate the target at xxnew
@@ -197,22 +183,29 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 					
 					### evaluate the proposal at xxnew
 					propnew <- rep(0,nrow(xxnew))
-					propnew <- propnew + Reduce("+",lapply(1:t,function(k){
-						dprop(xxnew,muHat[[k]][1,], SigmaHat[[k]][,,1])
+					propnew <- propnew + Reduce("+",lapply(1:(t-1),function(k){
+						dprop(xxnew,muHat[[k]][1,], SigmaHat[[k]][,,1])*((t==1)*N[1]+(t>1)*N[2])
 						}))
 					prop[from:to] <- propnew
 					
-					w[from:to] <- exp(targ[from:to])/prop[from:to]
+					w[from:to] <- exp(targ[from:to])/(prop[from:to]/(N[1]+(t-1)*N[2]))
 					w[from:to][(exp(targ[from:to])<sqrt(.Machine$double.eps))&(exp(prop[from:to])<sqrt(.Machine$double.eps))] <- 0
 					
 					}
 					
+			### Update the proposal
+			prop[1:(from-1)] <- prop[1:(from-1)] + N[2]*dprop(xx[1:(from-1),],muHat[[t-1]][1,],SigmaHat[[t-1]][,,1])
+			### Update the weights
+			w[1:(from-1)] <- exp(targ[1:(from-1)])/(prop[1:(from-1)]/(N[1]+(t-1)*N[2]))
+			### against underflow
+			w[1:(from-1)][(exp(targ[1:(from-1)])<sqrt(.Machine$double.eps))&(prop[1:(from-1)]<sqrt(.Machine$double.eps))] <- 0
+					
 			
 			### Compute new IS estimates of Mean and Variance
-			calcu <- cov.wt(xx[1:to,],wt=w[1:to])
-			SigmaHat[[t+1]] <- array(calcu$cov,c(dim(calcu$cov),1))
-			muHat[[t+1]] <- t(calcu$center)
-			alpha[[t+1]] <- 1
+			calcu <- cov.wt(xx[1:to,],wt=w[1:to]/sum(w[1:to]))
+			SigmaHat[[t]] <- array(calcu$cov,c(dim(calcu$cov),1))
+			muHat[[t]] <- t(calcu$center)
+			alpha[[t]] <- 1
 			
 			
 			### Compute the perplexity
@@ -222,10 +215,10 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 			
 			### Check for convergence
 			#cond <- (abs(Perp[t+1]-Perp[t])<=tol[1]*(abs(Perp[t])+tol[2]))
-			cond <- (abs(Perp[t+1]-Perp[t])<=tol)
+			#cond <- (abs(Perp[t+1]-Perp[t])<=tol)
 			#cond <- (sqrt(sum((muHat[[t+1]]-muHat[[t]])^2))<=tol)
 			
-			if(verbose) cat("\nPhase 1: t =",t,"\n Local ESS =",N[2]/(1+var(w[1:to])/(mean(w[1:to]))^2),"\n Perplexity =",Perp[t+1],"\n")
+			if(verbose) cat("\nPhase 1: t =",t,"\n Local ESS =",sum(w[1:to])^2/sum(w[1:to]^2),"\n Perplexity =",Perp[t+1],"\n")#N[2]/(1+var(w[1:to])/(mean(w[1:to]))^2)
 			
 			
 			from <- to + 1
@@ -236,23 +229,24 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 			}
 		
 		}
-	
+
 	### Second Phase
 	if(niter[2]!=0){
 		
 		### Draw a sample from the importance distribution
-		J <- sample(1:(from-1),N[3],prob=w[1:(from-1)],replace=TRUE)
+		# J <- sample(1:(from-1),N[3],prob=w[1:(from-1)],replace=TRUE)
 		
 		### Rao-Blackwellized Clustering
-		clustMix <- mixture(xx[J,])
+		# clustMix <- mixture(xx[J,])
 		
 		### Components of the mixture
-		alpha[[niter[1]+1]] <- clustMix$alpha
-		muHat[[niter[1]+1]] <- clustMix$muHat
-		SigmaHat[[niter[1]+1]] <- clustMix$SigmaHat
+		# alpha[[niter[1]+1]] <- clustMix$alpha
+		# muHat[[niter[1]+1]] <- clustMix$muHat
+		# SigmaHat[[niter[1]+1]] <- clustMix$SigmaHat
+		
+		# t <- t+1
 		
 		to <- to + (N[3]-N[2])
-		niter[1] <- min(niter[1],t)
 
 		cond <- FALSE
 		niter[1] <- min(niter[1],t)
@@ -261,23 +255,28 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 			
 			sampleImp <- function(n){
 				
-				### Sample xxnew from the mixture...
+				### Sample x from the mixture...
 				x <- do.call(rbind,lapply(1:n,function(j){
-					compo <- sample(1:G,1,prob=alpha[[t]])
-					y <- t(t(rprop(1,muHat[[t]][compo,],SigmaHat[[t]][,,compo])))
+					compo <- sample(1:G,1,prob=alpha[[t-1]])
+					y <- t(t(rprop(1,muHat[[t-1]][compo,],SigmaHat[[t-1]][,,compo])))
 					rownames(y) <- as.character(compo)
 					y
 					}))
 				
 				### evaluate the proposal at xxnew
 				prp <- rep(0,nrow(x))
-				prp <- prp + Reduce("+",lapply(1:t,function(k){Reduce("+",lapply(1:length(alpha[[k]]),function(g){
-						(alpha[[k]][g]* dprop(x,muHat[[k]][g,],SigmaHat[[k]][,,g]))
-						}))}))
+				
+				# prp <- prp + Reduce("+",lapply(1:t,function(k){Reduce("+",lapply(1:length(alpha[[k]]),function(g){
+						# (alpha[[k]][g]* dprop(x,muHat[[k]][g,],SigmaHat[[k]][,,g]))
+						# }))}))*N[3]
+						
+				prp <- prp + Reduce("+",lapply(1:(t-1),function(k){Reduce("+",lapply(1:length(alpha[[k]]),function(g){
+							((k<=niter[1])*N[2]+(k>niter[1])*N[3])*(alpha[[k]][g]*dprop(x,muHat[[k]][g,],SigmaHat[[k]][,,g]))
+							}))}))
 					
-				### evaluate the target at xxnew
+				### evaluate the target at x
 				trgt <- target(x)
-				ww <- exp(trgt)/(prp)
+				ww <- exp(trgt)/(prp/((t-niter[1]+1)*N[3]+N[2]*niter[1]))
 				ww[(exp(trgt)<sqrt(.Machine$double.eps))&(prp<sqrt(.Machine$double.eps))] <- 0
 				
 				return(list(x=x,trgt=trgt,prp=prp,ww=ww))
@@ -295,18 +294,8 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 			
 			newEnv <-  new.env()
 			
-			G <- length(alpha[[t]])
-			
-			
-			### Update the proposal
-			prop[1:(from-1)] <- prop[1:(from-1)] + Reduce("+",lapply(1:G,function(g){
-				N[3]*(alpha[[t]][g]* dprop(xx[1:(from-1),],muHat[[t]][g,],SigmaHat[[t]][,,g]))
-				}))
-			### Update the weights
-			w[1:(from-1)] <- exp(targ[1:(from-1)])/prop[1:(from-1)]
-			### against underflow
-			w[1:(from-1)][(exp(targ[1:(from-1)])<sqrt(.Machine$double.eps))&(prop[1:(from-1)]<sqrt(.Machine$double.eps))] <- 0
-			
+			G <- length(alpha[[t-1]])
+						
 			if (nCores > 1L && (have_mc || have_snow)) {
 				
 				assign("alpha",alpha,environment(sampleImp))
@@ -352,19 +341,15 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 					
 					### Sample xxnew from the mixture...
 					xxnew <- do.call(rbind,lapply(1:N[3],function(j){
-						compo <- sample(1:G,1,prob=alpha[[t]])
-						x <- t(t(rprop(1,muHat[[t]][compo,],SigmaHat[[t]][,,compo])))
+						compo <- sample(1:G,1,prob=alpha[[t-1]])
+						x <- t(t(rprop(1,muHat[[t-1]][compo,],SigmaHat[[t-1]][,,compo])))
 						rownames(x) <- as.character(compo)
 						x
 						}))
-					### Update the proposal
-					prop[1:(from-1)] <- prop[1:(from-1)] + Reduce("+",lapply(1:G,function(g){
-						N[3]*(alpha[[t]][g]* dprop(xx[1:(from-1),],muHat[[t]][g,],SigmaHat[[t]][,,g]))
-						}))
 					
 					propnew <- rep(0,nrow(xxnew))
-					propnew <- propnew + Reduce("+",lapply(1:t,function(k){Reduce("+",lapply(1:length(alpha[[k]]),function(g){
-							(alpha[[k]][g]* dprop(xxnew,muHat[[k]][g,],SigmaHat[[k]][,,g]))
+					propnew <- propnew + Reduce("+",lapply(1:(t-1),function(k){Reduce("+",lapply(1:length(alpha[[k]]),function(g){
+							((k<=niter[1])*N[2]+(k>niter[1])*N[3])*(alpha[[k]][g]* dprop(xxnew,muHat[[k]][g,],SigmaHat[[k]][,,g]))
 							}))}))
 					
 					xx[from:to,] <- xxnew  
@@ -372,26 +357,42 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 					targ[from:to] <- target(xxnew)
 					prop[from:to] <- propnew
 					
-					w[from:to] <- exp(targ[from:to])/(prop[from:to])
+					
+					#w[from:to] <- exp(targ[from:to])/(prop[from:to])
+					w[from:to] <- exp(targ[from:to])/(prop[from:to]/((t-niter[1]+1)*N[3]+N[2]*niter[1]))
+					
+					
 					w[from:to][(exp(targ[from:to])<sqrt(.Machine$double.eps))&(prop[from:to]<sqrt(.Machine$double.eps))] <- 0
 					
 					}
+			
+			### Update the proposal
+			prop[1:(from-1)] <- prop[1:(from-1)] + c(rep(N[2],N[2]*niter[1]),rep(N[3],from-1-N[2]*niter[1]))*Reduce("+",lapply(1:G,function(g){
+				(alpha[[t-1]][g]*dprop(xx[1:(from-1),],muHat[[t-1]][g,],SigmaHat[[t-1]][,,g]))
+				}))#*N[3]
+			### Update the weights
+			###### OPTIMIZE THIS
+			#w[1:(from-1)] <- exp(targ[1:(from-1)])/prop[1:(from-1)]
+			w[1:(from-1)] <- exp(targ[1:(from-1)])/(prop[1:(from-1)]/((t-niter[1]+1)*N[3]+N[2]*niter[1]))
+			### against underflow
+			w[1:(from-1)][(exp(targ[1:(from-1)])<sqrt(.Machine$double.eps))&(prop[1:(from-1)]<sqrt(.Machine$double.eps))] <- 0
+
 					
 			J <- sample(1:to,N[3],prob=w[1:to],replace=TRUE)
 			clustMix <- mixture(xx[J,])
 			
-			alpha[[t+1]] <- clustMix$alpha
-			muHat[[t+1]] <- clustMix$muHat
-			SigmaHat[[t+1]] <- clustMix$SigmaHat
+			alpha[[t]] <- clustMix$alpha
+			muHat[[t]] <- clustMix$muHat
+			SigmaHat[[t]] <- clustMix$SigmaHat
 			
 			wBar <- w[from:to]/sum(w[from:to])
 			wBar <- wBar[wBar>=sqrt(.Machine$double.eps)] 
 			Perp[t+1] <- exp(-sum(wBar*log(wBar)))/length(wBar)
 						
-			if(verbose)cat("\nPhase 2: t =",t,"Number of Components G =",G,"\n Local ESS =",N[3]/(1+var(w[1:to])/(mean(w[1:to]))^2),"\n Perplexity =",Perp[t+1],"\n")
+			if(verbose)cat("\nPhase 2: t =",t,"Number of Components G =",G,"\n Local ESS =",sum(w[1:to])^2/sum(w[1:to]^2),"\n Perplexity =",Perp[t+1],"\n")#N[3]/(1+var(w[1:to])/(mean(w[1:to]))^2)
 			
 			#cond <- (abs(Perp[t+1]-Perp[t])>=tol[1]*(abs(Perp[t])+tol[2]))
-			cond <- (abs(Perp[t+1]-Perp[t])<=tol)
+			#cond <- (abs(Perp[t+1]-Perp[t])<=tol)
 			#cond <- (sqrt(sum((alpha[[t+1]]%*%muHat[[t+1]]-alpha[[t]]%*%muHat[[t]])^2))<=tol)
 			
 			from <- to+1
@@ -410,13 +411,14 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 	if(have_snow||have_mc)parallel::stopCluster(cl)
 	
 	### Select the mixture with the highest perplexity	
-	best <- which.max(Perp)
+	best <- 1#which.max(Perp)
 	maxPerp <- max(Perp)
 	
-	IS <- cbind(xx,w)[1:(from-1),]
+	IS <- cbind(xx,w)#[1:(from-1),]
 	colnames(IS) <- c(paste("x",1:p,sep=""),"w")
+	IS <- IS[-(1:N[1]),]
 	
-	ESS <- nrow(IS)/(1+var(IS[,p+1])/(mean(IS[,p+1]))^2)
+	ESS <- sum(IS[,p+1])^2/sum(IS[,p+1]^2) #nrow(IS)/(1+var(IS[,p+1])/(mean(IS[,p+1]))^2)
 	
 	G <- length(alpha[[best]])
 	
@@ -440,8 +442,7 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 		}
 	dTarg <- dTarg()
 	
-	rTarg <- function(IS=IS,pp=alpha[[best]],mu=muHat[[best]],Sig=SigmaHat[[best]]){
-		G <- length(pp)
+	rTarg <- function(IS=IS,alpha=alpha,mu=muHat,Sig=SigmaHat){
 		function(n,ISmpl=FALSE){
 			
 			if(ISmpl){
@@ -449,8 +450,10 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 				IS[J,-ncol(IS)]
 				}else{
 					do.call(rbind,lapply(1:n,function(j){
-						compo <- sample(1:G,1,prob=pp)
-						x <- t(t(rprop(1,mu[compo,], Sig[,,compo])))
+						mix <- sample(1:length(alpha),1)
+						G <- length(alpha[[mix]])
+						compo <- sample(1:G,1,prob=alpha[[mix]])
+						x <- t(t(rprop(1,mu[[mix]][compo,], Sig[[mix]][,,compo])))
 						rownames(x) <- as.character(compo)
 						x
 						}))
@@ -481,9 +484,9 @@ AMIS <- function(N,niter,p,target,proposal=mvtComp(df=3),initialize=uniInit(),mi
 	argz[["niter"]] <- niter
 	
 	return(new("ISO",IS=IS,
-	                 Prop=alpha[[best]],
-	                 Mean= muHat[[best]],
-	                 Var=SigmaHat[[best]],
+	                 Prop=alpha,
+	                 Mean= muHat,
+	                 Var=SigmaHat,
 	                 ESS=ESS,
 	                 Perp = maxPerp,
 	                 seed=seed,

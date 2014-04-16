@@ -22,11 +22,12 @@ targetBanana <- function(sig=100,b=0.01,log=TRUE){
 	
 ### Multivariate Normal Target
 
-targetMVN <- function(Mu=rep(0,2),Sigma=diag(1,2,2)){
+targetMVN <- function(Mu=rep(0,2),Sigma=diag(1,2,2),log=TRUE){
 	
 	function(x){
-		p <- length(Mu)
-		-p/2*(log(2*pi))-1/2*log(det(Sigma))-1/2*t(x-Mu)%*%ginv(Sigma)%*%(x-Mu)
+		dmnorm(x,Mu,Sigma,log=log)
+		# p <- length(Mu)
+		# -p/2*(log(2*pi))-1/2*log(det(Sigma))-1/2*t(x-Mu)%*%ginv(Sigma)%*%(x-Mu)
 		}
 		
 	}
@@ -39,11 +40,7 @@ targetMix <- function(alpha=rep(.5,2),Mu=matrix(0,2,2),Sigma=array(cbind(diag(1,
 	function(x){
 		if(sum(alpha)!=1)alpha <- alpha/sum(alpha)
 		Reduce("+",lapply(1:length(alpha),function(g){
-			if(length(dim(x))>1){
-				alpha[g]*apply(x,1,function(y)dmnorm(y,Mu[g,],Sigma[,,g]))
-				}else{
-					log(alpha[g]*dmnorm(x,Mu[g,],Sigma[,,g]))
-					}
+			log(alpha[g]*dmnorm(x,Mu[g,],Sigma[,,g]),log=TRUE)
 			}))
 		}
 	}

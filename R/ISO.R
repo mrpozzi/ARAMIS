@@ -2,9 +2,9 @@
 ### Importance Sampling Object
 
 setClass("ISO",representation=representation(IS = "matrix",
-                                             Prop="numeric",
-                                             Mean="matrix",
-                                             Var = "array",
+                                             Prop="list",
+                                             Mean="list",
+                                             Var = "list",
                                              Perp = "numeric",
                                              ESS="numeric",
                                              seed="integer",
@@ -130,9 +130,9 @@ setMethod("names", signature = "ISO", definition = function(x) {
 ### returns the mean OR computes the mean of f(X)
 setMethod("mean", signature = "ISO", definition = function(x, fun=NULL,...) {
 	 if(is.null(fun)){
-	 	calcu <- cov.wt(x@IS[,1:(ncol(x@IS)-1)],wt=x@IS[,"w"],...)
+	 	calcu <- cov.wt(x@IS[,-ncol(x@IS)],wt=x@IS[,"w"]/sum(x@IS[,"w"]),...)
 	 	}else{
-	 		calcu <- cov.wt(fun(x@IS[,1:(ncol(x@IS)-1)]),wt=x@IS[,"w"],...)
+	 		calcu <- cov.wt(fun(x@IS[,-ncol(x@IS)]),wt=x@IS[,"w"]/sum(x@IS[,"w"]),...)
 	 		}
 	 
 	 return(calcu$center)
@@ -142,9 +142,9 @@ setMethod("mean", signature = "ISO", definition = function(x, fun=NULL,...) {
 ### returns the variance OR computes the variance of f(X)
 setMethod("var", signature = "ISO", definition = function(x, y=NULL,na.rm=FALSE,use) {
 	 if(is.null(y)){
-	 	calcu <- cov.wt(x@IS[,1:(ncol(x@IS)-1)],wt=x@IS[,"w"])
+	 	calcu <- cov.wt(x@IS[,-ncol(x@IS)],wt=x@IS[,"w"]/sum(x@IS[,"w"]))
 	 	}else{
-	 		calcu <- cov.wt(y(x@IS[,-ncol(x@IS)]),wt=x@IS[,"w"])
+	 		calcu <- cov.wt(y(x@IS[,-ncol(x@IS)]),wt=x@IS[,"w"]/sum(x@IS[,"w"]))
 	 		}
 	 
 	 return(calcu$cov)
